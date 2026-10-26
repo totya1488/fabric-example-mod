@@ -1,147 +1,134 @@
 package dev.dolp.killaura;
 
-import dev.dolp.killaura.Settings.Setting;
+import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.Text;
+import net.minecraft.util.Hand;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.RaycastContext;
+import org.lwjgl.glfw.GLFW;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Random;
 
-public class ClickGuiScreen extends Screen {
+public class KillAuraMod implements ClientModInitializer {
 
-    private static final String[] TABS = {"COMBAT", "BYPASS", "CONFIG"};
-    private static final int W = 200, TITLE_H = 14, TAB_H = 14, ROW_H = 14, PAD = 4;
-    private static final int BG = 0xE0101014, ACCENT = 0xFF8A5CFF, TAB_ON = 0xFF2A2A38, ROW = 0xFF1C1C24,
-            FILL = 0xFF3B2A70, TEXT = 0xFFFFFFFF, DIM = 0xFF9A9AA8, GREEN = 0xFF55FF88, RED = 0xFFFF5566;
-
-    private int wx = 20, wy = 20, tab = 0, dragX, dragY;
-    private boolean dragging;
-    private Setting sliding;
-    private String status = "";
-
-    public ClickGuiScreen() {
-        super(Text.literal("dolp killaura"));
-    }
+    private static final Random RNG = new Random();
+    private static KeyBinding toggleKey, guiKey;
+    private static LivingEntity pending; // picked and aimed in START, struck in END
 
     @Override
-    public boolean shouldPause() {
-        return false;
+    public void onInitializeClient() {
+        toggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.dolp.killaura", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_R, "category.dolp"));
+        guiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.dolp.clickgui", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_SHIFT, "category.dolp"));
+        Settings.load(); // last saved config
+        ClientTickEvents.START_CLIENT_TICK.register(KillAuraMod::start);
+        ClientTickEvents.END_CLIENT_TICK.register(KillAuraMod::end);
     }
 
-    private List<Setting> rows() {
-        List<Setting> out = new ArrayList<>();
-        for (Setting s : Settings.ALL) if (s.tab.equals(TABS[tab])) out.add(s);
-        return out;
-    }
-
-    private int rowY(int i) { return wy + TITLE_H + TAB_H + 6 + i * (ROW_H + 2); }
-    private int rowX() { return wx + PAD; }
-    private int rowW() { return W - PAD * 2; }
-
-    private static boolean inside(double mx, double my, int x, int y, int w, int h) {
-        return mx >= x && mx < x + w && my >= y && my < y + h;
-    }
-
-    private static String fmt(Setting s) {
-        return s.step >= 1 ? String.valueOf(Math.round(s.num)) : String.valueOf(Math.round(s.num * 100) / 100.0);
-    }
-
-    @Override
-    public void render(DrawContext ctx, int mx, int my, float delta) {
-        TextRenderer font = MinecraftClient.getInstance().textRenderer;
-        List<Setting> rows = rows();
-        int h = TITLE_H + TAB_H + 6 + rows.size() * (ROW_H + 2) + 14;
-
-        ctx.fill(wx, wy, wx + W, wy + h, BG);
-        ctx.fill(wx, wy, wx + W, wy + TITLE_H, ACCENT);
-        ctx.drawText(font, "dolp killaura", wx + PAD, wy + 3, TEXT, false);
-
-        int tw = W / TABS.length;
-        for (int i = 0; i < TABS.length; i++) {
-            int tx = wx + i * tw;
-            ctx.fill(tx, wy + TITLE_H, tx + tw, wy + TITLE_H + TAB_H, i == tab ? TAB_ON : ROW);
-            ctx.drawText(font, TABS[i], tx + 4, wy + TITLE_H + 3, i == tab ? TEXT : DIM, false);
+    // before the world tick: pick target and turn, so this tick's movement packet carries the new look
+    private static void start(MinecraftClient mc) {
+        while (toggleKey.wasPressed()) {
+            if (mc.currentScreen != null) continue;
+            Settings.ENABLED.bool = !Settings.ENABLED.bool;
+            if (mc.player != null)
+                mc.player.sendMessage(Text.literal("killaura " + (Settings.ENABLED.bool ? "on" : "off")), true);
+        }
+        while (guiKey.wasPressed()) {
+            if (mc.currentScreen instanceof ClickGuiScreen) mc.setScreen(null);
+            else if (mc.currentScreen == null) mc.setScreen(new ClickGuiScreen());
         }
 
-        for (int i = 0; i < rows.size(); i++) {
-            Setting s = rows.get(i);
-            int ry = rowY(i), rx = rowX(), rw = rowW();
-            ctx.fill(rx, ry, rx + rw, ry + ROW_H, ROW);
-            if (s.type == Setting.Type.NUM) ctx.fill(rx, ry, rx + (int) (rw * s.frac()), ry + ROW_H, FILL);
-            ctx.drawText(font, s.name, rx + 4, ry + 3, TEXT, false);
-            String v = switch (s.type) {
-                case BOOL -> s.bool ? "ON" : "OFF";
-                case NUM -> fmt(s);
-                case MODE -> s.modeName();
-                case ACTION -> "";
-            };
-            int vc = switch (s.type) {
-                case BOOL -> s.bool ? GREEN : RED;
-                case MODE -> ACCENT;
-                default -> TEXT;
-            };
-            if (!v.isEmpty()) ctx.drawText(font, v, rx + rw - font.getWidth(v) - 4, ry + 3, vc, false);
-        }
-
-        if (!status.isEmpty()) ctx.drawText(font, status, wx + PAD, wy + h - 11, DIM, false);
+        pending = null;
+        if (!Settings.ENABLED.bool || mc.player == null || mc.world == null
+                || mc.interactionManager == null || mc.currentScreen != null) return;
+        aimAndPick(mc, mc.player);
     }
 
-    @Override
-    public boolean mouseClicked(double mx, double my, int button) {
-        if (button == 0) {
-            if (inside(mx, my, wx, wy, W, TITLE_H)) {
-                dragging = true;
-                dragX = (int) mx - wx;
-                dragY = (int) my - wy;
-                return true;
-            }
-            if (inside(mx, my, wx, wy + TITLE_H, W, TAB_H)) {
-                tab = Math.min(TABS.length - 1, (int) (mx - wx) / (W / TABS.length));
-                return true;
-            }
-            List<Setting> rows = rows();
-            for (int i = 0; i < rows.size(); i++) {
-                Setting s = rows.get(i);
-                if (!inside(mx, my, rowX(), rowY(i), rowW(), ROW_H)) continue;
-                switch (s.type) {
-                    case BOOL -> s.bool = !s.bool;
-                    case MODE -> s.mode = (s.mode + 1) % s.modes.length;
-                    case NUM -> { sliding = s; setFromMouse(s, mx); }
-                    case ACTION -> status = s.action.get();
-                }
-                return true;
-            }
-        }
-        return super.mouseClicked(mx, my, button);
+    // after the world tick: this tick's movement packet already left, server sees the aimed look
+    private static void end(MinecraftClient mc) {
+        LivingEntity t = pending;
+        pending = null;
+        PlayerEntity me = mc.player;
+        if (t == null || me == null || mc.interactionManager == null || !t.isAlive()) return;
+        double r = Settings.RANGE.num;
+        if (me.squaredDistanceTo(t) > r * r) return;
+        if (me.getAttackCooldownProgress(0.5F) < Settings.COOLDOWN.num) return;
+        mc.interactionManager.attackEntity(me, t);
+        me.swingHand(Hand.MAIN_HAND);
     }
 
-    @Override
-    public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
-        if (dragging) {
-            wx = (int) mx - dragX;
-            wy = (int) my - dragY;
-            return true;
+    private static void aimAndPick(MinecraftClient mc, PlayerEntity me) {
+        if (me.getAttackCooldownProgress(0.5F) < Settings.COOLDOWN.num) return;
+
+        double range = Settings.RANGE.num;
+        Vec3d eye = me.getEyePos();
+        Vec3d look = me.getRotationVector();
+        double fovCos = Math.cos(Math.toRadians(Settings.FOV.num / 2.0));
+
+        LivingEntity best = null;
+        double bestDist = range * range;
+        for (LivingEntity e : mc.world.getEntitiesByClass(LivingEntity.class,
+                me.getBoundingBox().expand(range), x -> x != me && x.isAlive() && isWanted(x))) {
+            double dist = me.squaredDistanceTo(e);
+            if (dist >= bestDist) continue;
+            Vec3d p = aimPoint(e);
+            if (look.dotProduct(p.subtract(eye).normalize()) < fovCos) continue;
+            if (Settings.LOS.bool && blocked(mc, me, eye, p)) continue;
+            best = e;
+            bestDist = dist;
         }
-        if (sliding != null) {
-            setFromMouse(sliding, mx);
-            return true;
+        if (best == null) return;
+
+        Vec3d d = aimPoint(best).subtract(eye);
+        float wantYaw = (float) Math.toDegrees(Math.atan2(d.z, d.x)) - 90.0F;
+        float wantPitch = (float) -Math.toDegrees(Math.atan2(d.y, Math.sqrt(d.x * d.x + d.z * d.z)));
+
+        float yaw = me.getYaw(), pitch = me.getPitch();
+        if ("snap".equals(Settings.ROT_MODE.modeName())) {
+            yaw = wantYaw;
+            pitch = wantPitch;
+        } else {
+            float speed = (float) Settings.ROT_SPEED.num;
+            float jit = (float) Settings.ROT_JITTER.num;
+            float dy = MathHelper.wrapDegrees(wantYaw - yaw);
+            float dp = wantPitch - pitch;
+            yaw += MathHelper.clamp(dy, -speed, speed) + (RNG.nextFloat() * 2 - 1) * jit;
+            pitch += MathHelper.clamp(dp, -speed, speed) + (RNG.nextFloat() * 2 - 1) * jit;
+            pitch = MathHelper.clamp(pitch, -90.0F, 90.0F);
         }
-        return super.mouseDragged(mx, my, button, dx, dy);
+        me.setYaw(yaw);
+        me.setPitch(pitch);
+
+        // queue the hit only once the crosshair is actually on it
+        double cos = me.getRotationVector().dotProduct(d.normalize());
+        double angle = Math.toDegrees(Math.acos(MathHelper.clamp(cos, -1.0, 1.0)));
+        if (angle > Settings.AIM_TOL.num) return;
+        if (RNG.nextDouble() * 100 < Settings.SKIP.num) return;
+        pending = best;
     }
 
-    @Override
-    public boolean mouseReleased(double mx, double my, int button) {
-        dragging = false;
-        sliding = null;
-        return super.mouseReleased(mx, my, button);
+    private static boolean isWanted(LivingEntity e) {
+        return e instanceof PlayerEntity ? Settings.PLAYERS.bool : Settings.MOBS.bool;
     }
 
-    private void setFromMouse(Setting s, double mx) {
-        double f = Math.max(0, Math.min(1, (mx - rowX()) / rowW()));
-        double v = s.min + f * (s.max - s.min);
-        s.num = Math.max(s.min, Math.min(s.max, Math.round(v / s.step) * s.step));
+    private static Vec3d aimPoint(LivingEntity e) {
+        return e.getPos().add(0, e.getHeight() * 0.5, 0);
+    }
+
+    private static boolean blocked(MinecraftClient mc, PlayerEntity me, Vec3d from, Vec3d to) {
+        BlockHitResult hit = mc.world.raycast(new RaycastContext(from, to,
+                RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, me));
+        return hit.getType() != HitResult.Type.MISS;
     }
 }
