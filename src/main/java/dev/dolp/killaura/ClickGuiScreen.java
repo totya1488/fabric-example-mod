@@ -1,11 +1,11 @@
 package dev.dolp.killaura;
 
 import dev.dolp.killaura.Settings.Setting;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -23,11 +23,11 @@ public class ClickGuiScreen extends Screen {
     private String status = "";
 
     public ClickGuiScreen() {
-        super(Text.literal("dolp killaura"));
+        super(Component.literal("dolp killaura"));
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 
@@ -50,20 +50,20 @@ public class ClickGuiScreen extends Screen {
     }
 
     @Override
-    public void render(DrawContext ctx, int mx, int my, float delta) {
-        TextRenderer font = MinecraftClient.getInstance().textRenderer;
+    public void render(GuiGraphics ctx, int mx, int my, float delta) {
+        Font font = Minecraft.getInstance().font;
         List<Setting> rows = rows();
         int h = TITLE_H + TAB_H + 6 + rows.size() * (ROW_H + 2) + 14;
 
         ctx.fill(wx, wy, wx + W, wy + h, BG);
         ctx.fill(wx, wy, wx + W, wy + TITLE_H, ACCENT);
-        ctx.drawText(font, "dolp killaura", wx + PAD, wy + 3, TEXT, false);
+        ctx.drawString(font, "dolp killaura", wx + PAD, wy + 3, TEXT, false);
 
         int tw = W / TABS.length;
         for (int i = 0; i < TABS.length; i++) {
             int tx = wx + i * tw;
             ctx.fill(tx, wy + TITLE_H, tx + tw, wy + TITLE_H + TAB_H, i == tab ? TAB_ON : ROW);
-            ctx.drawText(font, TABS[i], tx + 4, wy + TITLE_H + 3, i == tab ? TEXT : DIM, false);
+            ctx.drawString(font, TABS[i], tx + 4, wy + TITLE_H + 3, i == tab ? TEXT : DIM, false);
         }
 
         for (int i = 0; i < rows.size(); i++) {
@@ -71,7 +71,7 @@ public class ClickGuiScreen extends Screen {
             int ry = rowY(i), rx = rowX(), rw = rowW();
             ctx.fill(rx, ry, rx + rw, ry + ROW_H, ROW);
             if (s.type == Setting.Type.NUM) ctx.fill(rx, ry, rx + (int) (rw * s.frac()), ry + ROW_H, FILL);
-            ctx.drawText(font, s.name, rx + 4, ry + 3, TEXT, false);
+            ctx.drawString(font, s.name, rx + 4, ry + 3, TEXT, false);
             String v = switch (s.type) {
                 case BOOL -> s.bool ? "ON" : "OFF";
                 case NUM -> fmt(s);
@@ -83,10 +83,10 @@ public class ClickGuiScreen extends Screen {
                 case MODE -> ACCENT;
                 default -> TEXT;
             };
-            if (!v.isEmpty()) ctx.drawText(font, v, rx + rw - font.getWidth(v) - 4, ry + 3, vc, false);
+            if (!v.isEmpty()) ctx.drawString(font, v, rx + rw - font.width(v) - 4, ry + 3, vc, false);
         }
 
-        if (!status.isEmpty()) ctx.drawText(font, status, wx + PAD, wy + h - 11, DIM, false);
+        if (!status.isEmpty()) ctx.drawString(font, status, wx + PAD, wy + h - 11, DIM, false);
     }
 
     @Override
